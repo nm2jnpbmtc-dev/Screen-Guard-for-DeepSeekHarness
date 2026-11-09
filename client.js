@@ -21,6 +21,55 @@ window.__ModuleLoader__.load({
     const ARM_MS = 320
     const MASK_Z = 2147480000
     const LOCK_KEY = 'dsh.screen-guard.lock'
+    const LOG_KEY = 'dsh.screen-guard.log'
+    const LOG_MAX = 50
+
+    /** Strip anything that could identify the machine before a log leaves the page. */
+    function redact(value) {
+      return String(value)
+        .replace(/file:\/\/\/\S+/gu, '<path>')
+        .replace(/[A-Za-z]:[\\/]\S+/gu, '<path>')
+        .replace(/https?:\/\/\S+/gu, '<url>')
+        .replace(/\b[a-f0-9]{32,}\b/giu, '<hex>')
+        .replace(/\s+/gu, ' ')
+        .slice(0, 300)
+    }
+
+    function readLog() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(LOG_KEY) ?? '[]')
+        return Array.isArray(parsed) ? parsed.filter((entry) => entry !== null && typeof entry === 'object') : []
+      } catch {
+        return []
+      }
+    }
+
+    function clearLog() {
+      try {
+        window.localStorage.removeItem(LOG_KEY)
+      } catch {
+        // storage disabled
+      }
+    }
+
+    /** Record one failure. Only failures are stored; normal use writes nothing. */
+    function captureError(source, error) {
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      const entry = { at: new Date().toISOString(), source, message: redact(message) }
+      const list = readLog()
+      list.push(entry)
+      while (list.length > LOG_MAX) list.shift()
+      try {
+        window.localStorage.setItem(LOG_KEY, JSON.stringify(list))
+      } catch {
+        // storage disabled: the entry is still visible in the console
+      }
+      try {
+        console.warn('[screen-guard]', entry)
+      } catch {
+        // never throw from logging
+      }
+    }
 
     /* ------------------------------------------------------------------ */
     /* Storage + hashing                                                   */
@@ -84,6 +133,7 @@ window.__ModuleLoader__.load({
       locked: initial.locked,
       hasPassword: initial.hash !== null,
       panel: null,
+      viewer: false,
       burst: 0,
       locking: false,
     }
@@ -135,9 +185,10 @@ window.__ModuleLoader__.load({
           if (wantWake && document.visibilityState === 'visible') acquire()
         })
         set({ wake: 'on' })
-      } catch {
+      } catch (error) {
         wantWake = false
         set({ wake: 'error' })
+        captureError('wake', error)
       }
     }
 
@@ -289,6 +340,13 @@ window.__ModuleLoader__.load({
 }
 @keyframes dsg-in { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
 
+.dsg-log { width: 300px; }
+.dsg-log-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow: auto; padding-right: 2px; }
+.dsg-log-item { display: flex; gap: 6px; font-size: 11px; line-height: 1.45; }
+.dsg-log-time { flex: none; color: var(--dsw-alias-label-secondary); opacity: .65; font-variant-numeric: tabular-nums; }
+.dsg-log-src { flex: none; color: var(--dsw-alias-label-primary); }
+.dsg-log-msg { color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+
 .dsg-form { display: flex; flex-direction: column; gap: 8px; }
 .dsg-form-title { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); }
 .dsg-input { width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; outline: none; }
@@ -411,6 +469,43 @@ window.__ModuleLoader__.load({
     /* Toolbar                                                             */
     /* ------------------------------------------------------------------ */
 
+    function LogViewer({ onClose }) {
+      const [entries, setEntries] = React.useState(readLog())
+      const [copied, setCopied] = React.useState(false)
+      const text = entries.map((entry) => `${entry.at} [${entry.source}] ${entry.message}`).join('\n')
+
+      return h('div', { className: 'dsg-form' },
+        h('div', { className: 'dsg-form-title' }, '崩溃日志'),
+        entries.length === 0
+          ? h('div', { className: 'dsg-row-desc' }, '暂无记录')
+          : h('div', { className: 'dsg-log-list' },
+            entries.slice().reverse().map((entry, index) =>
+              h('div', { className: 'dsg-log-item', key: index },
+                h('span', { className: 'dsg-log-time' }, entry.at.slice(11, 19)),
+                h('span', { className: 'dsg-log-src' }, entry.source),
+                h('span', { className: 'dsg-log-msg' }, entry.message),
+              ),
+            ),
+          ),
+        h('div', { className: 'dsg-form-actions' },
+          h('button', { className: 'dsg-btn', onClick: () => { clearLog(); setEntries([]) } }, '清空'),
+          h('button', {
+            className: 'dsg-btn',
+            onClick: async () => {
+              try {
+                await navigator.clipboard.writeText(text)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1200)
+              } catch (error) {
+                captureError('clipboard', error)
+              }
+            },
+          }, copied ? '已复制' : '复制全部'),
+          h('button', { className: 'dsg-btn', 'data-variant': 'primary', onClick: onClose }, '关闭'),
+        ),
+      )
+    }
+
     function GuardControls() {
       const snapshot = useGuard()
       const rootRef = React.useRef(null)
@@ -433,12 +528,12 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => clearTimeout(lockTimer.current), [])
 
       React.useEffect(() => {
-        if (snapshot.panel === null) return undefined
+        if (snapshot.panel === null && !snapshot.viewer) return undefined
         const onPointer = (event) => {
-          if (rootRef.current !== null && !rootRef.current.contains(event.target)) set({ panel: null })
+          if (rootRef.current !== null && !rootRef.current.contains(event.target)) set({ panel: null, viewer: false })
         }
         const onKey = (event) => {
-          if (event.key === 'Escape') set({ panel: null })
+          if (event.key === 'Escape') set({ panel: null, viewer: false })
         }
         document.addEventListener('pointerdown', onPointer, true)
         document.addEventListener('keydown', onKey, true)
@@ -446,7 +541,7 @@ window.__ModuleLoader__.load({
           document.removeEventListener('pointerdown', onPointer, true)
           document.removeEventListener('keydown', onKey, true)
         }
-      }, [snapshot.panel])
+      }, [snapshot.panel, snapshot.viewer])
 
       const wakeOn = snapshot.wake === 'on'
 
@@ -510,7 +605,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsg-tools', ref: rootRef, 'data-drop': String(drop) },
           burstKeyed,
 
-          item('mask', 'mask', false, eyeGlyph(18), '防窥遮罩', () => set({ mask: true })),
+          item('mask', 'mask', false, eyeGlyph(18), '防窥遮罩', () => set({ mask: true }), null,
+            (event) => { event.preventDefault(); set({ viewer: !snapshot.viewer }) },
+          ),
 
           item('lock', 'lock', snapshot.locked, lockGlyph(18, snapshot.locked || snapshot.locking), '密码锁屏', clickLock, null,
             snapshot.hasPassword && !snapshot.locked
@@ -521,6 +618,12 @@ window.__ModuleLoader__.load({
           snapshot.panel !== null
             ? h('div', { className: 'dsg-pop' },
               h(LockPanel, { view: snapshot.panel, onClose: () => set({ panel: null }) }),
+            )
+            : null,
+
+          snapshot.viewer
+            ? h('div', { className: 'dsg-pop dsg-log' },
+              h(LogViewer, { onClose: () => set({ viewer: false }) }),
             )
             : null,
         ),
@@ -642,6 +745,10 @@ window.__ModuleLoader__.load({
         return { crashed: true }
       }
 
+      componentDidCatch(error) {
+        captureError('ui', error)
+      }
+
       render() {
         if (!this.state.crashed) return this.props.children
         return this.props.fallback ?? null
@@ -651,6 +758,24 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        ctx.effect(() => {
+          const ours = (text) => /screen-guard|dsg-/u.test(text)
+          const onError = (event) => {
+            const text = `${event.message ?? ''} ${event.filename ?? ''}`
+            if (ours(text)) captureError('window', event.error ?? event.message)
+          }
+          const onRejection = (event) => {
+            const reason = event.reason
+            if (ours(String(reason?.stack ?? reason))) captureError('promise', reason)
+          }
+          window.addEventListener('error', onError)
+          window.addEventListener('unhandledrejection', onRejection)
+          return () => {
+            window.removeEventListener('error', onError)
+            window.removeEventListener('unhandledrejection', onRejection)
+          }
+        }, 'screen-guard error capture')
+
         ctx.effect(() => {
           const onVisible = () => {
             if (document.visibilityState === 'visible' && wantWake && sentinel === null) acquire()

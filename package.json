@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-screen-guard",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Keep the screen awake and hide the conversation behind an opaque curtain.",
