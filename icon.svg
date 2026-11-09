@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Screen guard">
+  <path d="M32 8 52 16v16c0 12-8.5 20.5-20 24-11.5-3.5-20-12-20-24V16Z" fill="none" stroke="#4D6BFE" stroke-width="5" stroke-linejoin="round"/>
+  <circle cx="32" cy="30" r="6" fill="none" stroke="#4D6BFE" stroke-width="4"/>
+  <path d="M32 36v8" stroke="#4D6BFE" stroke-width="4" stroke-linecap="round"/>
+</svg>

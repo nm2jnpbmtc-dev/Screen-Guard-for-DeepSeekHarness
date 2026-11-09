@@ -1,0 +1,3 @@
+- insert:
+    - id: screen-guard
+      name: '@local/dsh-screen-guard'
