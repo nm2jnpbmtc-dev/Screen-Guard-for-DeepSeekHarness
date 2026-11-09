@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-screen-guard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Keep the screen awake and hide the conversation behind an opaque curtain.",
@@ -20,7 +20,12 @@
     "README.md"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "immediately": true }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
   }
 }
